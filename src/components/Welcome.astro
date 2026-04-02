@@ -4,7 +4,7 @@ import background from '../assets/background.svg';
 ---
 
 <div id="container">
-	<img id="background" src={background.src} alt="" fetchpriority="high" />
+	<img id="background" src={background.src} alt="" loading="eager" />
 	<main>
 		<section id="hero">
 			<a href="https://astro.build"
@@ -164,6 +164,7 @@ import background from '../assets/background.svg';
 		max-width: 300px;
 		text-decoration: none;
 		transition: background 0.2s;
+		-webkit-backdrop-filter: blur(50px);
 		backdrop-filter: blur(50px);
 	}
 
