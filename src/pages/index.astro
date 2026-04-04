@@ -13,10 +13,13 @@ import Layout from '../layouts/Layout.astro';
 	<style is:global>
 		:root {
 			--base-white: #ffffff;
+			--base-raana: #77dd77;
+			--base-rannaywhite: #d0ddd0;
+			--base-rannayblack: #1c1f1c;
 		}
 
 		body {
-			background: var(--base-white);
+			background: var(--base-rannayblack);
 		}
 
 		.art-bg {
@@ -24,7 +27,7 @@ import Layout from '../layouts/Layout.astro';
 			inset: 0;
 			overflow: hidden;
 			pointer-events: none;
-			background: #d0ddd0;
+			background: var(--base-rannayblack);
 			isolation: isolate;
 			z-index: 0;
 		}
@@ -49,12 +52,13 @@ import Layout from '../layouts/Layout.astro';
 			transform: translate3d(-50%, -50%, 0);
 			background:
 				radial-gradient(
-					closest-side circle at 50% 50%,
-					rgba(var(--rgb), 0.8) 0%,
-					rgba(var(--rgb), 0.74) 16%,
-					rgba(var(--rgb), 0.58) 34%,
-					rgba(var(--rgb), 0.28) 58%,
-					rgba(var(--rgb), 0.11) 76%,
+					circle at 50% 50%,
+					rgba(var(--rgb), 0.64) 0%,
+					rgba(var(--rgb), 0) 100%
+				),
+				radial-gradient(
+					circle at 50% 50%,
+					rgba(var(--rgb), 0.32) 0%,
 					rgba(var(--rgb), 0) 100%
 				);
 		}
@@ -72,9 +76,10 @@ import Layout from '../layouts/Layout.astro';
 			margin: 0;
 			font-family: "Fraunces", "Times New Roman", serif;
 			font-weight: 400;
-			font-size: clamp(2rem, 4vw, 4rem);
+			font-size: clamp(2.4rem, 6.4vw, 4.8rem);
 			letter-spacing: 0.08em;
-			color: rgba(24, 36, 24, 0.5);
+			color: rgba(192, 216, 192, 0.4);
+			/* color: rgba(24, 36, 24, 0.5); */
 			/* text-transform: uppercase; */
 			mix-blend-mode: multiply;
 			user-select: none;

@@ -7,30 +7,36 @@ if (layer) {
   const RANDOM_COUNT = TOTAL_COUNT - CORNER_COUNT;
   const SIZE_MIN = 80;
   const SIZE_MAX = 96;
-  const DIST_MIN_BASE = 32;
-  const DIST_MIN_ADAPT = 8;
-  const DIST_MAX_BASE = 36;
-  const DIST_MAX_ADAPT = 8;
+
+  // Lower bound of distribution uniformity. Larger value enforces more even spacing.
+  const UNIFORMITY_FLOOR = 0.76;
+  const CANDIDATE_ATTEMPTS = 220;
+  const EDGE_TARGET_COUNT = 2;
+  const EDGE_BAND_WIDTH = 10;
+  const FIELD_MIN = 4;
+  const FIELD_MAX = 96;
+  const CORNER_OFFSET_MAX = 6.0;
+
   const guaranteedDiagonalIsTopLeftBottomRight = Math.random() < 0.5;
   const guaranteedCorners = guaranteedDiagonalIsTopLeftBottomRight
     ? [
-        { x: 4, y: 4 },
-        { x: 96, y: 96 },
+        { x: 0, y: 0 },
+        { x: 100, y: 100 },
       ]
     : [
-        { x: 96, y: 4 },
-        { x: 4, y: 96 },
+        { x: 100, y: 0 },
+        { x: 0, y: 100 },
       ];
   const EXCLUDED_CORNERS = guaranteedDiagonalIsTopLeftBottomRight
     ? [
-        { x: 96, y: 4 },
-        { x: 4, y: 96 },
+        { x: 100, y: 0 },
+        { x: 0, y: 100 },
       ]
     : [
-        { x: 4, y: 4 },
-        { x: 96, y: 96 },
+        { x: 0, y: 0 },
+        { x: 100, y: 100 },
       ];
-  const EXCLUDED_CORNER_RADIUS = 20;
+  const EXCLUDED_CORNER_RADIUS = 16;
   const points = [];
   let planeSide = 0;
   let viewportWidth = 0;
@@ -56,34 +62,45 @@ if (layer) {
 
   const sizeWeight = (size) => (size - SIZE_MIN) / (SIZE_MAX - SIZE_MIN);
 
+  const targetSpacing =
+    ((FIELD_MAX - FIELD_MIN) / Math.sqrt(Math.max(TOTAL_COUNT, 1))) * 0.95;
+
   const adaptiveMinDistance = (sizeA, sizeB) => {
-    const mixedWeight = (sizeWeight(sizeA) + sizeWeight(sizeB)) * 0.3;
-    return DIST_MIN_BASE + mixedWeight * DIST_MIN_ADAPT;
+    const mixedWeight = (sizeWeight(sizeA) + sizeWeight(sizeB)) * 0.5;
+    return targetSpacing * UNIFORMITY_FLOOR * (0.9 + mixedWeight * 0.2);
   };
 
   const adaptiveMaxDistance = (sizeA, sizeB) => {
-    const mixedWeight = (sizeWeight(sizeA) + sizeWeight(sizeB)) * 0.3;
-    return DIST_MAX_BASE + mixedWeight * DIST_MAX_ADAPT;
+    const mixedWeight = (sizeWeight(sizeA) + sizeWeight(sizeB)) * 0.5;
+    return targetSpacing * 1.65 * (0.92 + mixedWeight * 0.16);
   };
 
   const nearestPointInfo = (x, y) => {
     if (points.length === 0) {
-      return null;
+      return {
+        d1: Number.POSITIVE_INFINITY,
+        d2: Number.POSITIVE_INFINITY,
+        p1: null,
+      };
     }
 
     let nearestPoint = points[0];
     let nearestDistance = Math.hypot(x - nearestPoint.x, y - nearestPoint.y);
+    let secondNearestDistance = Number.POSITIVE_INFINITY;
 
     for (let i = 1; i < points.length; i += 1) {
       const p = points[i];
       const d = Math.hypot(x - p.x, y - p.y);
       if (d < nearestDistance) {
+        secondNearestDistance = nearestDistance;
         nearestDistance = d;
         nearestPoint = p;
+      } else if (d < secondNearestDistance) {
+        secondNearestDistance = d;
       }
     }
 
-    return { point: nearestPoint, distance: nearestDistance };
+    return { d1: nearestDistance, d2: secondNearestDistance, p1: nearestPoint };
   };
 
   const inExcludedCorner = (x, y) => {
@@ -94,6 +111,92 @@ if (layer) {
       }
     }
     return false;
+  };
+
+  const edgeDistance = (x, y) => Math.min(x, 100 - x, y, 100 - y);
+
+  const randomCandidate = (preferEdge) => {
+    if (!preferEdge) {
+      return {
+        x: randomInRange(FIELD_MIN, FIELD_MAX),
+        y: randomInRange(FIELD_MIN, FIELD_MAX),
+      };
+    }
+
+    const side = Math.floor(randomInRange(0, 4));
+    const axis = randomInRange(FIELD_MIN, FIELD_MAX);
+    const band = randomInRange(0, EDGE_BAND_WIDTH);
+
+    if (side === 0) {
+      return { x: axis, y: FIELD_MIN + band };
+    }
+    if (side === 1) {
+      return { x: FIELD_MAX - band, y: axis };
+    }
+    if (side === 2) {
+      return { x: axis, y: FIELD_MAX - band };
+    }
+    return { x: FIELD_MIN + band, y: axis };
+  };
+
+  const cornerPointFromEndpoint = (endpoint) => {
+    const inwardAngle = Math.atan2(50 - endpoint.y, 50 - endpoint.x);
+    const angle = inwardAngle + randomInRange(-Math.PI / 5, Math.PI / 5);
+    const radius = randomInRange(0, CORNER_OFFSET_MAX);
+    return {
+      x: clamp(endpoint.x + Math.cos(angle) * radius, 0, 100),
+      y: clamp(endpoint.y + Math.sin(angle) * radius, 0, 100),
+    };
+  };
+
+  const pickDistributedPoint = (size, preferEdge) => {
+    let bestCandidate = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (let attempt = 0; attempt < CANDIDATE_ATTEMPTS; attempt += 1) {
+      const candidate = randomCandidate(preferEdge);
+
+      if (inExcludedCorner(candidate.x, candidate.y)) {
+        continue;
+      }
+
+      const near = nearestPointInfo(candidate.x, candidate.y);
+      if (!near.p1) {
+        return candidate;
+      }
+
+      const minDist = adaptiveMinDistance(size, near.p1.size);
+      const maxDist = adaptiveMaxDistance(size, near.p1.size);
+      if (near.d1 < minDist || near.d1 > maxDist) {
+        continue;
+      }
+
+      const d2 = Number.isFinite(near.d2) ? near.d2 : targetSpacing;
+      let score =
+        Math.abs(near.d1 - targetSpacing) +
+        0.65 * Math.abs(d2 - targetSpacing) +
+        0.5 * Math.abs(d2 - near.d1);
+
+      if (preferEdge) {
+        score += edgeDistance(candidate.x, candidate.y) * 0.12;
+      }
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+    }
+
+    // Risk note: when constraints are too strict for small N and large elements,
+    // we relax to a bounded fallback point to avoid generation deadlocks.
+    if (!bestCandidate) {
+      return {
+        x: randomInRange(FIELD_MIN + 4, FIELD_MAX - 4),
+        y: randomInRange(FIELD_MIN + 4, FIELD_MAX - 4),
+      };
+    }
+
+    return bestCandidate;
   };
 
   const addGlow = (config) => {
@@ -120,7 +223,7 @@ if (layer) {
   };
 
   for (let i = 0; i < CORNER_COUNT; i += 1) {
-    const corner = guaranteedCorners[i];
+    const corner = cornerPointFromEndpoint(guaranteedCorners[i]);
     const size = randomInRange(58, 66);
     const sizeMix = sizeWeight(size);
 
@@ -134,45 +237,26 @@ if (layer) {
     });
   }
 
-  for (let i = 0; i < RANDOM_COUNT; i += 1) {
+  const edgeCount = Math.min(EDGE_TARGET_COUNT, RANDOM_COUNT);
+  for (let i = 0; i < edgeCount; i += 1) {
     const size = randomInRange(SIZE_MIN, SIZE_MAX);
     const sizeMix = sizeWeight(size);
-    let bestCandidate = null;
-    let bestScore = Number.POSITIVE_INFINITY;
+    const candidate = pickDistributedPoint(size, true);
 
-    for (let attempt = 0; attempt < 140; attempt += 1) {
-      const candidate = { x: randomInRange(14, 86), y: randomInRange(14, 86) };
-      if (inExcludedCorner(candidate.x, candidate.y)) {
-        continue;
-      }
+    addGlow({
+      x: candidate.x,
+      y: candidate.y,
+      size,
+      ratio: randomInRange(0.96, 1.12),
+      blur: randomInRange(96, 112),
+      opacity: clamp(0.55 + sizeMix * 0.2 + randomInRange(0, 0.04), 0.52, 0.82),
+    });
+  }
 
-      const nearest = nearestPointInfo(candidate.x, candidate.y);
-      if (!nearest) {
-        bestCandidate = candidate;
-        break;
-      }
-
-      const minDist = adaptiveMinDistance(size, nearest.point.size);
-      const maxDist = adaptiveMaxDistance(size, nearest.point.size);
-
-      if (nearest.distance >= minDist && nearest.distance <= maxDist) {
-        bestCandidate = candidate;
-        break;
-      }
-
-      const score = Math.min(
-        Math.abs(nearest.distance - minDist),
-        Math.abs(nearest.distance - maxDist),
-      );
-      if (score < bestScore) {
-        bestScore = score;
-        bestCandidate = candidate;
-      }
-    }
-
-    if (!bestCandidate) {
-      bestCandidate = { x: randomInRange(18, 82), y: randomInRange(18, 82) };
-    }
+  for (let i = edgeCount; i < RANDOM_COUNT; i += 1) {
+    const size = randomInRange(SIZE_MIN, SIZE_MAX);
+    const sizeMix = sizeWeight(size);
+    const bestCandidate = pickDistributedPoint(size, false);
 
     addGlow({
       x: bestCandidate.x,
@@ -188,14 +272,26 @@ if (layer) {
     "(prefers-reduced-motion: reduce)",
   ).matches;
   if (!prefersReducedMotion) {
+    // Regression period constants (safe to tune): larger values => slower return cycle.
+    const REGRESSION_PERIOD_MIN_MS = 18000;
+    const REGRESSION_PERIOD_MAX_MS = 26000;
+
     const startAngle = randomInRange(0, Math.PI * 2);
-    const cycleMs = randomInRange(16384,32768);
-    const accelMs = 3000;
-    const directionShiftMinMs = 3200;
-    const directionShiftMaxMs = 4800;
-    const directionJitterRad = 0.16;
-    const noiseShiftMinMs = 1200;
-    const noiseShiftMaxMs = 2200;
+    const cycleMs = randomInRange(
+      REGRESSION_PERIOD_MIN_MS,
+      REGRESSION_PERIOD_MAX_MS,
+    );
+    const accelMs = 5200;
+    const directionShiftMinMs = 5200;
+    const directionShiftMaxMs = 8200;
+    const directionJitterRad = 0.055;
+    const noiseShiftMinMs = 2600;
+    const noiseShiftMaxMs = 4600;
+    const harmonic2 = randomInRange(0.16, 0.24);
+    const harmonic3 = randomInRange(0.06, 0.12);
+    const entropyPhaseA = randomInRange(0, Math.PI * 2);
+    const entropyPhaseB = randomInRange(0, Math.PI * 2);
+    const globalSpeedScale = 0.52;
 
     let angle = startAngle;
     let targetAngle = startAngle;
@@ -251,20 +347,35 @@ if (layer) {
       const launchFactor = smoothstep(launchT);
 
       const angleDelta = shortestAngleDiff(angle, targetAngle);
-      angleVelocity += angleDelta * dt * 1.2;
-      angleVelocity *= Math.exp(-1.9 * dt);
+      // Lower response and softer damping to create slower, more inertial turns.
+      angleVelocity += angleDelta * dt * 0.42;
+      angleVelocity *= Math.exp(-0.85 * dt);
       angle += angleVelocity * dt;
 
-      noiseValue += (noiseTarget - noiseValue) * Math.min(1, dt * 0.9);
+      noiseValue += (noiseTarget - noiseValue) * Math.min(1, dt * 0.28);
 
       const elapsed = now - startAt;
       const phase = ((elapsed % cycleMs) / cycleMs) * Math.PI * 2;
       const breathing = 1 + 0.08 * Math.sin(phase * 2 + breathPhase);
-      const rhythm = Math.sin(phase) * breathing * (1 + noiseValue);
-      const radius = baseAmplitude * launchFactor * rhythm;
+      const radialWave =
+        Math.sin(phase) +
+        harmonic2 * Math.sin(2 * phase) +
+        harmonic3 * Math.sin(3 * phase);
+      const entropyAngle =
+        angle +
+        0.24 * Math.sin(phase * 1.41 + entropyPhaseA) +
+        0.12 * Math.sin(phase * 2.23 + entropyPhaseB) +
+        noiseValue * 0.14;
+      const radius =
+        baseAmplitude *
+        launchFactor *
+        radialWave *
+        breathing *
+        (1 + noiseValue * 0.2) *
+        globalSpeedScale;
 
-      const offsetX = Math.cos(angle) * radius;
-      const offsetY = Math.sin(angle) * radius;
+      const offsetX = Math.cos(entropyAngle) * radius;
+      const offsetY = Math.sin(entropyAngle) * radius;
 
       layer.style.transform =
         "translate3d(" +
